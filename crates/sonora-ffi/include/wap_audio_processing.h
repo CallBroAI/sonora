@@ -11,24 +11,28 @@
  * Downmix method for multi-channel capture.
  */
 enum WapDownmixMethod
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   AverageChannels = 0,
   UseFirstChannel = 1,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum WapDownmixMethod WapDownmixMethod;
+#else
 typedef int32_t WapDownmixMethod;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
  * Noise suppression aggressiveness level.
  */
 enum WapNoiseSuppressionLevel
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   Low = 0,
   Moderate = 1,
@@ -36,7 +40,11 @@ enum WapNoiseSuppressionLevel
   VeryHigh = 3,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum WapNoiseSuppressionLevel WapNoiseSuppressionLevel;
+#else
 typedef int32_t WapNoiseSuppressionLevel;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
@@ -45,9 +53,9 @@ typedef int32_t WapNoiseSuppressionLevel;
  * `0` = success, negative = error.
  */
 enum WapError
-#ifdef __cplusplus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : int32_t
-#endif // __cplusplus
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
   /**
    * Operation succeeded.
@@ -79,7 +87,11 @@ enum WapError
   BadDataLength = -6,
 };
 #ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum WapError WapError;
+#else
 typedef int32_t WapError;
+#endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
 /**
