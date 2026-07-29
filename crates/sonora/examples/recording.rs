@@ -83,7 +83,7 @@ fn main() -> Result<()> {
     let (mut prod, mut cons) = HeapRb::<f32>::new(ring_size).split();
 
     let input_stream = input_device.build_input_stream(
-        &cpal_config,
+        cpal_config,
         move |data: &[f32], _: &cpal::InputCallbackInfo| {
             prod.push_slice(data);
         },

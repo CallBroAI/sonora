@@ -59,7 +59,7 @@ fn main() -> Result<()> {
 
     // Input stream: push mic samples into ring buffer.
     let input_stream = input_device.build_input_stream(
-        &cpal_config,
+        cpal_config,
         move |data: &[f32], _: &cpal::InputCallbackInfo| {
             in_prod.push_slice(data);
         },
@@ -69,7 +69,7 @@ fn main() -> Result<()> {
 
     // Output stream: pull processed samples from ring buffer.
     let output_stream = output_device.build_output_stream(
-        &cpal_config,
+        cpal_config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let filled = out_cons.pop_slice(data);
             data[filled..].fill(0.0);
