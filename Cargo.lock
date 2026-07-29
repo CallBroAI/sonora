@@ -1333,7 +1333,7 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "sonora"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "sonora-aec3"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "sonora-common-audio",
@@ -1365,7 +1365,7 @@ dependencies = [
 
 [[package]]
 name = "sonora-agc2"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "derive_more",
@@ -1379,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "sonora-common-audio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "derive_more",
  "sonora-simd",
@@ -1387,7 +1387,7 @@ dependencies = [
 
 [[package]]
 name = "sonora-ffi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cbindgen",
  "sonora",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "sonora-fft"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "test-strategy",
@@ -1403,14 +1403,14 @@ dependencies = [
 
 [[package]]
 name = "sonora-ns"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "sonora-fft",
 ]
 
 [[package]]
 name = "sonora-simd"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cpufeatures",
 ]
