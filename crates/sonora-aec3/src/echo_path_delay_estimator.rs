@@ -41,6 +41,7 @@ impl EchoPathDelayEstimator {
         num_capture_channels: usize,
     ) -> Self {
         let down_sampling_factor = config.delay.down_sampling_factor;
+        #[allow(clippy::manual_checked_ops, reason = "clearer logic")]
         let sub_block_size = if down_sampling_factor != 0 {
             BLOCK_SIZE / down_sampling_factor
         } else {

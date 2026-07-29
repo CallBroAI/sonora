@@ -29,6 +29,7 @@ impl PartialEq for SaturationProtectorBuffer {
         }
         let mut i0 = self.front_index();
         let mut i1 = other.front_index();
+        #[allow(clippy::explicit_counter_loop, reason = "upstream logic")]
         for _ in 0..self.size {
             if self.buffer[i0 % SATURATION_PROTECTOR_BUFFER_SIZE]
                 != other.buffer[i1 % SATURATION_PROTECTOR_BUFFER_SIZE]
