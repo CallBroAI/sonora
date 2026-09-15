@@ -35,6 +35,18 @@ pub enum Error {
     },
     /// A stream parameter (e.g. delay) was out of range and was clamped.
     StreamParameterClamped,
+    /// A caller-supplied buffer is too small for the stream config it was
+    /// paired with.
+    ///
+    /// The C++ interface takes bare pointers and cannot detect this; the Rust
+    /// interface takes slices, so a short buffer is reported instead of
+    /// panicking on an out-of-bounds index deeper in the pipeline.
+    InvalidBufferLength {
+        /// Length required by the stream config.
+        expected: usize,
+        /// Length actually supplied.
+        got: usize,
+    },
 }
 
 impl fmt::Display for Error {
@@ -56,6 +68,12 @@ impl fmt::Display for Error {
                 )
             }
             Self::StreamParameterClamped => write!(f, "stream parameter was clamped"),
+            Self::InvalidBufferLength { expected, got } => {
+                write!(
+                    f,
+                    "buffer too short: expected at least {expected} elements, got {got}"
+                )
+            }
         }
     }
 }
@@ -189,6 +207,76 @@ fn choose_error_output_option(
     Err((error, option))
 }
 
+/// Checks that deinterleaved buffers are large enough for their stream config.
+///
+/// The format checks above only inspect the [`StreamConfig`]s. The processing
+/// pipeline then indexes `src`/`dest` using frame and channel counts taken
+/// from those configs, so a buffer that disagrees with its config is an
+/// out-of-bounds index — guarded only by `debug_assert!`s, which are compiled
+/// out of release builds. Callers driven by a live capture device can hand us
+/// a short frame (a partial packet, or a device that delivered fewer frames
+/// than requested), so this is reachable input, not just programmer error.
+fn validate_buffer_lengths_f32(
+    src: &[&[f32]],
+    input_config: &StreamConfig,
+    output_config: &StreamConfig,
+    dest: &[&mut [f32]],
+) -> Result<(), Error> {
+    let check = |expected: usize, got: usize| {
+        if got < expected {
+            Err(Error::InvalidBufferLength { expected, got })
+        } else {
+            Ok(())
+        }
+    };
+
+    let in_channels = input_config.num_channels() as usize;
+    let in_frames = input_config.num_frames();
+    check(in_channels, src.len())?;
+    for channel in &src[..in_channels] {
+        check(in_frames, channel.len())?;
+    }
+
+    let out_channels = output_config.num_channels() as usize;
+    let out_frames = output_config.num_frames();
+    check(out_channels, dest.len())?;
+    for channel in &dest[..out_channels] {
+        check(out_frames, channel.len())?;
+    }
+
+    Ok(())
+}
+
+/// Checks that interleaved buffers are large enough for their stream config.
+///
+/// See [`validate_buffer_lengths_f32`] for why this is checked at the API
+/// boundary rather than left to `debug_assert!`s.
+fn validate_buffer_lengths_i16(
+    src: &[i16],
+    input_config: &StreamConfig,
+    output_config: &StreamConfig,
+    dest: &[i16],
+) -> Result<(), Error> {
+    for (expected, got) in [
+        (input_config.num_samples(), src.len()),
+        (output_config.num_samples(), dest.len()),
+    ] {
+        if got < expected {
+            return Err(Error::InvalidBufferLength { expected, got });
+        }
+    }
+    Ok(())
+}
+
+/// Silences as much of a deinterleaved output buffer as is actually there.
+fn silence_f32(dest: &mut [&mut [f32]], output_config: &StreamConfig) {
+    let out_frames = output_config.num_frames();
+    for ch_buf in dest.iter_mut() {
+        let len = ch_buf.len().min(out_frames);
+        ch_buf[..len].fill(0.0);
+    }
+}
+
 /// Handles unsupported audio formats for float (deinterleaved) processing.
 ///
 /// On error, fills the output buffer according to C++ semantics, then
@@ -203,7 +291,19 @@ fn handle_unsupported_formats_f32(
     dest: &mut [&mut [f32]],
 ) -> Result<(), Error> {
     let (error, option) = match choose_error_output_option(input_config, output_config) {
-        Ok(()) => return Ok(()),
+        Ok(()) => {
+            // Configs agree; the buffers still have to match them. Bind first
+            // so the shared reborrow of `dest` ends before `silence_f32` takes
+            // it mutably.
+            let validity = validate_buffer_lengths_f32(src, input_config, output_config, dest);
+            return match validity {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    silence_f32(dest, output_config);
+                    Err(error)
+                }
+            };
+        }
         Err(pair) => pair,
     };
 
@@ -212,12 +312,7 @@ fn handle_unsupported_formats_f32(
 
     match option {
         ErrorOutputOption::DoNothing => {}
-        ErrorOutputOption::Silence => {
-            for ch_buf in dest.iter_mut().take(out_ch) {
-                let len = ch_buf.len().min(out_frames);
-                ch_buf[..len].fill(0.0);
-            }
-        }
+        ErrorOutputOption::Silence => silence_f32(dest, output_config),
         ErrorOutputOption::CopyOfFirstChannel => {
             if let Some(first_in) = src.first() {
                 for ch_buf in dest.iter_mut().take(out_ch) {
@@ -251,7 +346,19 @@ fn handle_unsupported_formats_i16(
     dest: &mut [i16],
 ) -> Result<(), Error> {
     let (error, option) = match choose_error_output_option(input_config, output_config) {
-        Ok(()) => return Ok(()),
+        Ok(()) => {
+            // Configs agree; the buffers still have to match them. Bind first
+            // so the shared reborrow of `dest` ends before it is filled.
+            let validity = validate_buffer_lengths_i16(src, input_config, output_config, dest);
+            return match validity {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let len = dest.len().min(output_config.num_samples());
+                    dest[..len].fill(0);
+                    Err(error)
+                }
+            };
+        }
         Err(pair) => pair,
     };
 
@@ -812,6 +919,147 @@ mod tests {
                 input: 2,
                 output: 3
             })
+        );
+    }
+
+    // A capture device can hand the caller a frame shorter than the one its
+    // StreamConfig describes (a partial packet, or a device that delivered
+    // fewer frames than requested). The config is valid in that case, so the
+    // format checks pass and the pipeline used to index straight past the end
+    // of the slice — a panic in release builds, where the `debug_assert!`s in
+    // AudioBuffer are compiled out. These must return an error instead.
+
+    #[test]
+    fn process_capture_f32_with_config_rejects_short_src_channel() {
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(16000, 1);
+        let src_data = [0.0f32; 100]; // 100 frames supplied, 160 described
+        let src: &[&[f32]] = &[&src_data];
+        let mut dest_data = [0.0f32; 160];
+        let dest: &mut [&mut [f32]] = &mut [&mut dest_data];
+        let result = apm.process_capture_f32_with_config(src, &config, &config, dest);
+        assert_eq!(
+            result,
+            Err(Error::InvalidBufferLength {
+                expected: 160,
+                got: 100
+            })
+        );
+    }
+
+    #[test]
+    fn process_capture_f32_with_config_rejects_missing_src_channel() {
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(16000, 2);
+        let src_data = [0.0f32; 160];
+        let src: &[&[f32]] = &[&src_data]; // 1 channel supplied, 2 described
+        let mut dest0 = [0.0f32; 160];
+        let mut dest1 = [0.0f32; 160];
+        let dest: &mut [&mut [f32]] = &mut [&mut dest0, &mut dest1];
+        let result = apm.process_capture_f32_with_config(src, &config, &config, dest);
+        assert_eq!(
+            result,
+            Err(Error::InvalidBufferLength {
+                expected: 2,
+                got: 1
+            })
+        );
+    }
+
+    #[test]
+    fn process_capture_f32_with_config_rejects_short_dest_channel() {
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(16000, 1);
+        let src_data = [0.0f32; 160];
+        let src: &[&[f32]] = &[&src_data];
+        let mut dest_data = [0.0f32; 80]; // 80 frames of room, 160 described
+        let dest: &mut [&mut [f32]] = &mut [&mut dest_data];
+        let result = apm.process_capture_f32_with_config(src, &config, &config, dest);
+        assert_eq!(
+            result,
+            Err(Error::InvalidBufferLength {
+                expected: 160,
+                got: 80
+            })
+        );
+    }
+
+    #[test]
+    fn process_capture_f32_with_config_silences_dest_on_short_src() {
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(16000, 1);
+        let src_data = [0.5f32; 100];
+        let src: &[&[f32]] = &[&src_data];
+        let mut dest_data = [0.5f32; 160];
+        let dest: &mut [&mut [f32]] = &mut [&mut dest_data];
+        let _ = apm.process_capture_f32_with_config(src, &config, &config, dest);
+        // No stale audio is left behind for the caller to emit.
+        assert!(dest_data.iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn process_render_f32_with_config_rejects_short_src_channel() {
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(48000, 1);
+        let src_data = [0.0f32; 441]; // 44.1 kHz-sized frame against a 48 kHz config
+        let src: &[&[f32]] = &[&src_data];
+        let mut dest_data = [0.0f32; 480];
+        let dest: &mut [&mut [f32]] = &mut [&mut dest_data];
+        let result = apm.process_render_f32_with_config(src, &config, &config, dest);
+        assert_eq!(
+            result,
+            Err(Error::InvalidBufferLength {
+                expected: 480,
+                got: 441
+            })
+        );
+    }
+
+    #[test]
+    fn process_capture_i16_with_config_rejects_short_src() {
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(16000, 2);
+        let src = [0i16; 200]; // 320 interleaved samples described
+        let mut dest = [0i16; 320];
+        let result = apm.process_capture_i16_with_config(&src, &config, &config, &mut dest);
+        assert_eq!(
+            result,
+            Err(Error::InvalidBufferLength {
+                expected: 320,
+                got: 200
+            })
+        );
+    }
+
+    #[test]
+    fn process_capture_i16_with_config_rejects_short_dest() {
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(16000, 1);
+        let src = [0i16; 160];
+        let mut dest = [0i16; 80];
+        let result = apm.process_capture_i16_with_config(&src, &config, &config, &mut dest);
+        assert_eq!(
+            result,
+            Err(Error::InvalidBufferLength {
+                expected: 160,
+                got: 80
+            })
+        );
+    }
+
+    #[test]
+    fn process_capture_accepts_oversized_buffers() {
+        // Only a *short* buffer is an error; extra room is harmless and the
+        // C++ interface has no way to reject it either.
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(16000, 1);
+        let src_data = [0.0f32; 320];
+        let src: &[&[f32]] = &[&src_data];
+        let mut dest_data = [0.0f32; 320];
+        let dest: &mut [&mut [f32]] = &mut [&mut dest_data];
+        assert!(
+            apm.process_capture_f32_with_config(src, &config, &config, dest)
+                .is_ok()
         );
     }
 
