@@ -1048,6 +1048,38 @@ mod tests {
     }
 
     #[test]
+    fn process_render_i16_with_config_rejects_short_src() {
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(16000, 2);
+        let src = [0i16; 200]; // 320 interleaved samples described
+        let mut dest = [0i16; 320];
+        let result = apm.process_render_i16_with_config(&src, &config, &config, &mut dest);
+        assert_eq!(
+            result,
+            Err(Error::InvalidBufferLength {
+                expected: 320,
+                got: 200
+            })
+        );
+    }
+
+    #[test]
+    fn process_render_i16_with_config_rejects_short_dest() {
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(16000, 1);
+        let src = [0i16; 160];
+        let mut dest = [0i16; 80];
+        let result = apm.process_render_i16_with_config(&src, &config, &config, &mut dest);
+        assert_eq!(
+            result,
+            Err(Error::InvalidBufferLength {
+                expected: 160,
+                got: 80
+            })
+        );
+    }
+
+    #[test]
     fn process_capture_accepts_oversized_buffers() {
         // Only a *short* buffer is an error; extra room is harmless and the
         // C++ interface has no way to reject it either.
