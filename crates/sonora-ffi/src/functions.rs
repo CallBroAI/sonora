@@ -241,6 +241,7 @@ fn rust_error_to_wap(err: sonora::Error) -> WapError {
             WapError::BadNumberChannels
         }
         sonora::Error::StreamParameterClamped => WapError::BadStreamParameter,
+        sonora::Error::InvalidBufferLength { .. } => WapError::BadDataLength,
     }
 }
 
