@@ -269,9 +269,13 @@ fn validate_buffer_lengths_i16(
 }
 
 /// Silences as much of a deinterleaved output buffer as is actually there.
+///
+/// Stays within `output_config.num_channels()`: `dest` is allowed to be
+/// larger than the config, and the channels past it are not ours to write.
 fn silence_f32(dest: &mut [&mut [f32]], output_config: &StreamConfig) {
+    let out_channels = output_config.num_channels() as usize;
     let out_frames = output_config.num_frames();
-    for ch_buf in dest.iter_mut() {
+    for ch_buf in dest.iter_mut().take(out_channels) {
         let len = ch_buf.len().min(out_frames);
         ch_buf[..len].fill(0.0);
     }
@@ -1192,6 +1196,61 @@ mod tests {
         for &sample in dest[0].iter() {
             assert_eq!(sample, 0.0, "expected silence");
         }
+    }
+
+    #[test]
+    fn format_handling_f32_silence_stays_within_configured_channels() {
+        // `dest` may carry more channel slices than the output config asks
+        // for -- see `process_capture_accepts_oversized_buffers`. Silencing
+        // must stop at the configured channel count instead of zeroing
+        // buffers the caller never offered as output.
+        let mut apm = AudioProcessing::new();
+        let input_config = StreamConfig::new(7900, 1);
+        let output_config = StreamConfig::new(16000, 1);
+        let src_data = [1.0f32; 79];
+        let src: &[&[f32]] = &[&src_data];
+        let mut configured = [42.0f32; 160];
+        let mut beyond_config = [42.0f32; 160];
+        let dest: &mut [&mut [f32]] = &mut [&mut configured, &mut beyond_config];
+        let result = apm.process_capture_f32_with_config(src, &input_config, &output_config, dest);
+        assert_eq!(result, Err(Error::InvalidSampleRate { rate: 7900 }));
+        assert!(
+            configured.iter().all(|&s| s == 0.0),
+            "the configured channel should be silenced"
+        );
+        assert!(
+            beyond_config.iter().all(|&s| s == 42.0),
+            "channels past output_config.num_channels() must be left alone"
+        );
+    }
+
+    #[test]
+    fn short_buffer_silence_stays_within_configured_channels() {
+        // Same bound, reached through the buffer-length check rather than a
+        // format mismatch.
+        let mut apm = AudioProcessing::new();
+        let config = StreamConfig::new(16000, 1);
+        let src_data = [0.5f32; 80]; // half of a 160-frame block
+        let src: &[&[f32]] = &[&src_data];
+        let mut configured = [42.0f32; 160];
+        let mut beyond_config = [42.0f32; 160];
+        let dest: &mut [&mut [f32]] = &mut [&mut configured, &mut beyond_config];
+        let result = apm.process_capture_f32_with_config(src, &config, &config, dest);
+        assert_eq!(
+            result,
+            Err(Error::InvalidBufferLength {
+                expected: 160,
+                got: 80
+            })
+        );
+        assert!(
+            configured.iter().all(|&s| s == 0.0),
+            "the configured channel should be silenced"
+        );
+        assert!(
+            beyond_config.iter().all(|&s| s == 42.0),
+            "channels past output_config.num_channels() must be left alone"
+        );
     }
 
     #[test]
