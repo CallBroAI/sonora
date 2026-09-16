@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # CallBroAI fork-local: as a fork, neither `push` nor `pull_request` has ever
+  # produced a run here (0 runs as of 2026-09-16, despite pushes to `main` on
+  # 09-15 and 09-16). `workflow_dispatch` is accepted, so it is the only working
+  # way to verify a fork-local commit -- e.g. the short-buffer panic fix that
+  # callbro-tauri-device pins by rev. Keep until push-triggered runs work here.
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
